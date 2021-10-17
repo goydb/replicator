@@ -1,9 +1,16 @@
-package replicator
+package client
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
+	"strings"
 	"time"
+
+	"github.com/goydb/replicator/logger"
 )
 
 var (
@@ -11,23 +18,66 @@ var (
 )
 
 type Client struct {
+	remote *Remote
+	client *http.Client
+	logger logger.Logger
+	base   *url.URL
+}
+
+func NewClient(r *Remote) (*Client, error) {
+	base, err := url.Parse(r.URL)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Client{
+		remote: r,
+		client: http.DefaultClient,
+		logger: new(logger.Noop),
+		base:   base,
+	}, nil
+}
+
+func (c *Client) SetLogger(logger logger.Logger) {
+	c.logger = logger
+}
+
+func (c *Client) request(req *http.Request) (*http.Response, error) {
+	for key, value := range c.remote.Headers {
+		req.Header.Add(key, value)
+	}
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		c.logger.Debugf("HTTP [%s] %s -> %s", req.Method, req.URL, err)
+	} else {
+		c.logger.Debugf("HTTP [%s] %s -> %d", req.Method, req.URL, resp.StatusCode)
+	}
+
+	return resp, err
 }
 
 func (c *Client) Check(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, c.remote.URL, nil)
+	if err != nil {
+		return err
+	}
 
-	// HEAD /source HTTP/1.1
-	// Host: localhost:5984
-	// User-Agent: CouchDB
+	resp, err := c.request(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close() // nolint: errcheck
 
-	// Response:
+	if resp.StatusCode == http.StatusOK {
+		return nil
+	}
 
-	// HTTP/1.1 200 OK
-	// Cache-Control: must-revalidate
-	// Content-Type: application/json
-	// Date: Sat, 05 Oct 2013 08:50:39 GMT
-	// Server: CouchDB (Erlang/OTP)
+	if resp.StatusCode == http.StatusNotFound {
+		return ErrNotFound
+	}
 
-	return nil
+	return fmt.Errorf("check request failed: %s", resp.Status)
 }
 
 func (c *Client) Create(ctx context.Context) error {
@@ -66,40 +116,32 @@ func (c *Client) Create(ctx context.Context) error {
 }
 
 func (c *Client) Info(ctx context.Context) (*Info, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.remote.URL, nil)
+	if err != nil {
+		return nil, err
+	}
 
-	// Request:
+	resp, err := c.request(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close() // nolint: errcheck
 
-	// GET /source HTTP/1.1
-	// Accept: application/json
-	// Host: localhost:5984
-	// User-Agent: CouchDB
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, ErrNotFound
+	}
 
-	// Response:
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("info request failed: %s", resp.Status)
+	}
 
-	// HTTP/1.1 200 OK
-	// Cache-Control: must-revalidate
-	// Content-Length: 256
-	// Content-Type: application/json
-	// Date: Tue, 08 Oct 2013 07:53:08 GMT
-	// Server: CouchDB (Erlang OTP)
+	var i Info
+	err = json.NewDecoder(resp.Body).Decode(&i)
+	if err != nil {
+		return nil, err
+	}
 
-	// {
-	//     "committed_update_seq": 61772,
-	//     "compact_running": false,
-	//     "db_name": "source",
-	//     "disk_format_version": 6,
-	//     "doc_count": 41961,
-	//     "doc_del_count": 3807,
-	//     "instance_start_time": "0",
-	//     "purge_seq": 0,
-	//     "sizes": {
-	//       "active": 70781613961,
-	//       "disk": 79132913799,
-	//       "external": 72345632950
-	//     },
-	//     "update_seq": 61772
-	// }
-	return nil, nil
+	return &i, nil
 }
 
 type Info struct {
@@ -110,9 +152,9 @@ type Info struct {
 	DocCount           int    `json:"doc_count"`
 	DocDelCount        int    `json:"doc_del_count"`
 	InstanceStartTime  string `json:"instance_start_time"`
-	PurgeSeq           int    `json:"purge_seq"`
+	PurgeSeq           string `json:"purge_seq"`
 	Sizes              Sizes  `json:"sizes"`
-	UpdateSeq          int    `json:"update_seq"`
+	UpdateSeq          string `json:"update_seq"`
 }
 
 type Sizes struct {
@@ -121,8 +163,39 @@ type Sizes struct {
 	External int64 `json:"external"`
 }
 
+func urlJoin(parts ...string) string {
+	parts[0] = strings.TrimRight(parts[0], "/")
+	return strings.Join(parts, "/")
+}
+
 func (c *Client) GetReplicationLog(ctx context.Context, id string) (*ReplicationLog, error) {
-	return nil, nil
+	u := urlJoin(c.remote.URL, "_local", id)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.request(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close() // nolint: errcheck
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, ErrNotFound
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("replication log request failed: %s", resp.Status)
+	}
+
+	var rl ReplicationLog
+	err = json.NewDecoder(resp.Body).Decode(&rl)
+	if err != nil {
+		return nil, err
+	}
+
+	return &rl, nil
 }
 
 type ReplicationLog struct {
@@ -149,25 +222,51 @@ type History struct {
 }
 
 func (c *Client) Changes(ctx context.Context, opts ChangeOptions) (*ChangesResponse, error) {
-	// /source/_changes?feed=normal&style=all_docs&heartbeat=10000
+	path := fmt.Sprintf("_changes?feed=normal&style=all_docs&heartbeat=%d&since=%s",
+		opts.Heartbeat.Milliseconds(), opts.Since)
+	u := urlJoin(c.remote.URL, path)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
 
-	return nil, nil
+	resp, err := c.request(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close() // nolint: errcheck
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, ErrNotFound
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("replication log request failed: %s", resp.Status)
+	}
+
+	var changes ChangesResponse
+	err = json.NewDecoder(resp.Body).Decode(&changes)
+	if err != nil {
+		return nil, err
+	}
+
+	return &changes, nil
 }
 
 type ChangeOptions struct {
 	Heartbeat time.Duration
-	since     string
+	Since     string
 }
 
 type ChangesResponse struct {
 	Results []Results `json:"results"`
-	LastSeq int       `json:"last_seq"`
+	LastSeq string    `json:"last_seq"`
 }
 type Changes struct {
 	Rev string `json:"rev"`
 }
 type Results struct {
-	Seq     int       `json:"seq"`
+	Seq     string    `json:"seq"`
 	ID      string    `json:"id"`
 	Changes []Changes `json:"changes"`
 	Deleted bool      `json:"deleted,omitempty"`

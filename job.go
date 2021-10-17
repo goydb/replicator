@@ -4,19 +4,20 @@ import (
 	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
-	"sort"
 	"time"
+
+	"github.com/goydb/replicator/client"
 )
 
 type Job struct {
-	ID           string  `json:"_id"`
-	Rev          string  `json:"_rev"`
-	UserCtx      UserCtx `json:"user_ctx"`
-	Source       Remote  `json:"source"`
-	Target       Remote  `json:"target"`
-	CreateTarget bool    `json:"create_target"`
-	Continuous   bool    `json:"continuous"`
-	Owner        string  `json:"owner"`
+	ID           string         `json:"_id"`
+	Rev          string         `json:"_rev"`
+	UserCtx      UserCtx        `json:"user_ctx"`
+	Source       *client.Remote `json:"source"`
+	Target       *client.Remote `json:"target"`
+	CreateTarget bool           `json:"create_target"`
+	Continuous   bool           `json:"continuous"`
+	Owner        string         `json:"owner"`
 
 	Config
 }
@@ -40,23 +41,47 @@ func (j *Job) GenerateReplicationID(name string) string {
 	hash := sha256.New()
 
 	b := bufio.NewWriter(hash)
-	b.WriteString(name)
-	b.WriteString("|")
+	_, err := b.WriteString(name)
+	if err != nil {
+		panic(err)
+	}
+	_, err = b.WriteString("|")
+	if err != nil {
+		panic(err)
+	}
 	j.Source.GenerateReplicationID(b)
-	b.WriteString("|")
+	_, err = b.WriteString("|")
+	if err != nil {
+		panic(err)
+	}
 	j.Target.GenerateReplicationID(b)
-	b.WriteString("|")
+	_, err = b.WriteString("|")
+	if err != nil {
+		panic(err)
+	}
 
 	if j.CreateTarget {
-		b.WriteString("T")
+		_, err = b.WriteString("T")
+		if err != nil {
+			panic(err)
+		}
 	} else {
-		b.WriteString("F")
+		_, err = b.WriteString("F")
+		if err != nil {
+			panic(err)
+		}
 	}
 
 	if j.Continuous {
-		b.WriteString("T")
+		_, err = b.WriteString("T")
+		if err != nil {
+			panic(err)
+		}
 	} else {
-		b.WriteString("F")
+		_, err = b.WriteString("F")
+		if err != nil {
+			panic(err)
+		}
 	}
 
 	b.Flush()
@@ -68,28 +93,4 @@ func (j *Job) GenerateReplicationID(name string) string {
 type UserCtx struct {
 	Name  string   `json:"name"`
 	Roles []string `json:"roles"`
-}
-
-type Remote struct {
-	URL     string            `json:"url"`
-	Headers map[string]string `json:"headers"`
-}
-
-func (r Remote) GenerateReplicationID(b *bufio.Writer) {
-	b.WriteString(r.URL)
-	b.WriteString("|")
-
-	var keys []string
-	for key := range r.Headers {
-		keys = append(keys, key)
-	}
-
-	sort.Stable(sort.StringSlice(keys))
-	for _, key := range keys {
-		value := r.Headers[key]
-		b.WriteString(key)
-		b.WriteString("|")
-		b.WriteString(value)
-		b.WriteString("|")
-	}
 }
