@@ -22,6 +22,7 @@ func TestReplication(t *testing.T) {
 			URL:     "http://localhost:5984/target/",
 			Headers: auth,
 		},
+		CreateTarget: true,
 	})
 	assert.NoError(t, err)
 	r.SetLogger(new(logger.Stdout))

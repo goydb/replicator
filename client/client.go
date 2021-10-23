@@ -15,6 +15,7 @@ import (
 
 var (
 	ErrNotFound = errors.New("not found")
+	ErrFailed   = errors.New("operation failed")
 )
 
 type Client struct {
@@ -81,36 +82,30 @@ func (c *Client) Check(ctx context.Context) error {
 }
 
 func (c *Client) Create(ctx context.Context) error {
-	// 	PUT /target HTTP/1.1
-	// Accept: application/json
-	// Host: localhost:5984
-	// User-Agent: CouchDB
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.remote.URL, nil)
+	if err != nil {
+		return err
+	}
 
-	// Response:
+	resp, err := c.request(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close() // nolint: errcheck
 
-	// HTTP/1.1 201 Created
-	// Content-Length: 12
-	// Content-Type: application/json
-	// Date: Sat, 05 Oct 2013 08:58:41 GMT
-	// Server: CouchDB (Erlang/OTP)
+	var info struct {
+		Error       string `json:"error"`
+		ErrorReason string `json:"reason"`
+		OK          bool   `json:"ok"`
+	}
+	err = json.NewDecoder(resp.Body).Decode(&info)
+	if err != nil {
+		return err
+	}
 
-	// {
-	//     "ok": true
-	// }
-
-	// However, the Replicator’s PUT request MAY NOT succeeded due to insufficient privileges (which are granted by the provided credential) and so receive a 401 Unauthorized or a 403 Forbidden error. Such errors SHOULD be expected and well handled:
-
-	// HTTP/1.1 500 Internal Server Error
-	// Cache-Control: must-revalidate
-	// Content-Length: 108
-	// Content-Type: application/json
-	// Date: Fri, 09 May 2014 13:50:32 GMT
-	// Server: CouchDB (Erlang OTP)
-
-	// {
-	//     "error": "unauthorized",
-	//     "reason": "unauthorized to access or create database http://localhost:5984/target"
-	// }
+	if !info.OK {
+		return fmt.Errorf("%w: %s: %s", ErrFailed, info.Error, info.ErrorReason)
+	}
 
 	return nil
 }
