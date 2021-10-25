@@ -1,10 +1,13 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"strings"
@@ -268,12 +271,44 @@ type Results struct {
 }
 
 func (c *Client) RevDiff(ctx context.Context, r RevDiffRequest) (DiffResponse, error) {
-	return nil, nil
+	var buf bytes.Buffer
+
+	err := json.NewEncoder(&buf).Encode(r)
+	if err != nil {
+		return nil, err
+	}
+
+	u := urlJoin(c.remote.URL, "_revs_diff")
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, &buf)
+	req.Header.Add("Accept", "application/json")
+	req.Header.Add("Content-Type", "application/json")
+
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.request(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close() // nolint: errcheck
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("rev diff request failed: %s", resp.Status)
+	}
+
+	var diffResp DiffResponse
+	err = json.NewDecoder(resp.Body).Decode(&diffResp)
+	if err != nil {
+		return nil, err
+	}
+
+	return diffResp, nil
 }
 
 type RevDiffRequest map[string][]string
 
-type DiffResponse map[string]Diff
+type DiffResponse map[string]*Diff
 
 type Diff struct {
 	// Missing contains missing revisions
@@ -282,6 +317,70 @@ type Diff struct {
 
 // GetDocumentComplete
 // 2.4.2.5.1. Fetch Changed Documents
-func (c *Client) GetDocumentComplete(ctx context.Context, docid string) error {
-	return nil
+func (c *Client) GetDocumentComplete(ctx context.Context, docid string, diff *Diff) (*CompleteDoc, error) {
+	for i, rev := range diff.Missing {
+		diff.Missing[i] = "%22" + rev + "%22"
+	}
+
+	u := urlJoin(c.remote.URL, docid+"?revs=true&latest=true&open_revs=[")
+	u += strings.Join(diff.Missing, ",") + "]"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	req.Header.Add("Accept", "multipart/mixed")
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.request(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close() // nolint: errcheck
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("rev diff request failed: %s", resp.Status)
+	}
+
+	contentType := resp.Header.Get("Content-Type")
+	matches := boundaryMixedRegexp.FindStringSubmatch(contentType)
+
+	if len(matches) != 2 {
+		return nil, fmt.Errorf("no multipart mixed")
+	}
+
+	reader := multipart.NewReader(resp.Body, matches[1])
+	for {
+		c.logger.Debug("Next part")
+		part, err := reader.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		c.logger.Debugf("Next 1 part ## %#v", part.Header)
+
+		contentType := part.Header.Get("Content-Type")
+		matches := boundaryRelatedRegexp.FindStringSubmatch(contentType)
+
+		if len(matches) != 2 {
+			return nil, fmt.Errorf("no multipart related")
+		}
+
+		mr := multipart.NewReader(part, matches[1])
+		for {
+			c.logger.Debug("Next part")
+			part1, err := mr.NextPart()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				return nil, err
+			}
+
+			c.logger.Debugf("Next 2 part ## %#v", part1.Header)
+		}
+	}
+
+	return nil, nil
 }

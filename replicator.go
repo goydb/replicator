@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
+	"time"
 
 	"github.com/goydb/replicator/client"
 	"github.com/goydb/replicator/logger"
@@ -180,6 +182,8 @@ func (r *Replicator) FindCommonAncestry(ctx context.Context) error {
 // https://docs.couchdb.org/en/stable/replication/protocol.html#locate-changed-documents
 func (r *Replicator) LocateChangedDocuments(ctx context.Context) error {
 start:
+	time.Sleep(time.Second)
+
 	// Listen to Changes Feed
 	changes, err := r.source.Changes(ctx, client.ChangeOptions{
 		Since:     r.sourceLastSeq,
@@ -223,19 +227,57 @@ start:
 	return nil
 }
 
+type Stack []*client.CompleteDoc
+
+func (s *Stack) Size() int64 {
+	return 0 // TODO
+}
+
+// MB10 10 MB
+const MB10 = 10 * (1024 ^ 2)
+
 // ReplicateChanges
 // https://docs.couchdb.org/en/stable/replication/protocol.html#replicate-changes
 func (r *Replicator) ReplicateChanges(ctx context.Context) error {
-	for docid := range r.diffResp {
+	var stack Stack
+
+	for docid, diff := range r.diffResp {
 		// Fetch Next Changed Document
-		err := r.source.GetDocumentComplete(ctx, docid)
+		doc, err := r.source.GetDocumentComplete(ctx, docid, diff)
 		if err != nil {
 			return err
 		}
 
 		// Document Has Changed Attachments?
-		// WIP point
+		if doc.HasChangedAttachments() {
+			// Are They Big Enough?
+			if doc.Size() > MB10 {
+				// Update Document on Target
+				// TODO directly update the document and attachments
+			} else {
+				// Put Document Into the Stack
+				stack = append(stack, doc)
+			}
+		}
+
+		// Stack is Full?
+		if stack.Size() > MB10 {
+			// Upload Stack of Documents to Target
+			// TODO POST /target/_bulk_docs
+		} else {
+			continue
+		}
+
+		//  Ensure in Commit
+		// TODO POST /target/_ensure_full_commit
+
+		// Record Replication Checkpoint
+		// TODO PUT /source/_local/replication-id
+		// TODO PUT /target/_local/replication-id
 	}
+
+	// WIP point
+	log.Fatal("ERROR")
 
 	return nil
 }
