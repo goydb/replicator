@@ -384,3 +384,221 @@ func (c *Client) GetDocumentComplete(ctx context.Context, docid string, diff *Di
 
 	return nil, nil
 }
+
+// UploadDocumentWithAttachments
+// 2.4.2.5.3. Upload Document with Attachments
+func (c *Client) UploadDocumentWithAttachments(ctx context.Context, doc *CompleteDoc) error {
+	/* PUT /target/SpaghettiWithMeatballs?new_edits=false HTTP/1.1
+	Accept: application/json
+	Content-Length: 1030
+	Content-Type: multipart/related; boundary="864d690aeb91f25d469dec6851fb57f2"
+	Host: localhost:5984
+	User-Agent: CouchDB
+
+	--2fa48cba80d0cdba7829931fe8acce9d
+	Content-Type: application/json
+
+	{
+		"_attachments": {
+			"recipe.txt": {
+				"content_type": "text/plain",
+				"digest": "md5-R5CrCb6fX10Y46AqtNn0oQ==",
+				"follows": true,
+				"length": 87,
+				"revpos": 7
+			}
+		},
+		"_id": "SpaghettiWithMeatballs",
+		"_rev": "7-474f12eb068c717243487a9505f6123b",
+		"_revisions": {
+			"ids": [
+				"474f12eb068c717243487a9505f6123b",
+				"5949cfcd437e3ee22d2d98a26d1a83bf",
+				"00ecbbc54e2a171156ec345b77dfdf59",
+				"fc997b62794a6268f2636a4a176efcd6",
+				"3552c87351aadc1e4bea2461a1e8113a",
+				"404838bc2862ce76c6ebed046f9eb542",
+				"5defd9d813628cea6e98196eb0ee8594"
+			],
+			"start": 7
+		},
+		"description": "An Italian-American delicious dish",
+		"ingredients": [
+			"spaghetti",
+			"tomato sauce",
+			"meatballs",
+			"love"
+		],
+		"name": "Spaghetti with meatballs"
+	}
+	--2fa48cba80d0cdba7829931fe8acce9d
+	Content-Disposition: attachment; filename="recipe.txt"
+	Content-Type: text/plain
+	Content-Length: 87
+
+	1. Cook spaghetti
+	2. Cook meetballs
+	3. Mix them
+	4. Add tomato sauce
+	5. ...
+	6. PROFIT!
+
+	--2fa48cba80d0cdba7829931fe8acce9d-- */
+	return nil
+}
+
+// BulkDocs
+// 2.4.2.5.2. Upload Batch of Changed Documents
+func (c *Client) BulkDocs(ctx context.Context, stack *Stack) error {
+	/*
+	   Request:
+
+	   POST /target/_bulk_docs HTTP/1.1
+	   Accept: application/json
+	   Content-Length: 826
+	   Content-Type:application/json
+	   Host: localhost:5984
+	   User-Agent: CouchDB
+	   X-Couch-Full-Commit: false
+
+	   {
+	       "docs": [
+	           {
+	               "_id": "SpaghettiWithMeatballs",
+	               "_rev": "1-917fa2381192822767f010b95b45325b",
+	               "_revisions": {
+	                   "ids": [
+	                       "917fa2381192822767f010b95b45325b"
+	                   ],
+	                   "start": 1
+	               },
+	               "description": "An Italian-American delicious dish",
+	               "ingredients": [
+	                   "spaghetti",
+	                   "tomato sauce",
+	                   "meatballs"
+	               ],
+	               "name": "Spaghetti with meatballs"
+	           },
+	           {
+	               "_id": "LambStew",
+	               "_rev": "1-34c318924a8f327223eed702ddfdc66d",
+	               "_revisions": {
+	                   "ids": [
+	                       "34c318924a8f327223eed702ddfdc66d"
+	                   ],
+	                   "start": 1
+	               },
+	               "servings": 6,
+	               "subtitle": "Delicious with scone topping",
+	               "title": "Lamb Stew"
+	           },
+	           {
+	               "_id": "FishStew",
+	               "_rev": "1-9c65296036141e575d32ba9c034dd3ee",
+	               "_revisions": {
+	                   "ids": [
+	                       "9c65296036141e575d32ba9c034dd3ee"
+	                   ],
+	                   "start": 1
+	               },
+	               "servings": 4,
+	               "subtitle": "Delicious with fresh bread",
+	               "title": "Fish Stew"
+	           }
+	       ],
+	       "new_edits": false
+	   } */
+
+	return nil
+}
+
+// EnsureFullCommit
+// 2.4.2.5.4. Ensure In Commit
+func (c *Client) EnsureFullCommit(ctx context.Context) error {
+	/* 	Request:
+
+	   	POST /target/_ensure_full_commit HTTP/1.1
+	   	Accept: application/json
+	   	Content-Type: application/json
+	   	Host: localhost:5984
+
+	   	Response:
+
+	   	HTTP/1.1 201 Created
+	   	Cache-Control: must-revalidate
+	   	Content-Length: 53
+	   	Content-Type: application/json
+	   	Date: Web, 06 Nov 2013 18:20:43 GMT
+	   	Server: CouchDB (Erlang/OTP)
+
+	   	{
+	   		"instance_start_time": "0",
+	   		"ok": true
+	   	}
+
+	*/
+	return nil
+}
+
+// RecordReplicationCheckpoint
+// 2.4.2.5.5. Record Replication Checkpoint
+func (c *Client) RecordReplicationCheckpoint(ctx context.Context) error {
+
+	/*
+	   Request:
+
+	   PUT /source/_local/afa899a9e59589c3d4ce5668e3218aef HTTP/1.1
+	   Accept: application/json
+	   Content-Length: 591
+	   Content-Type: application/json
+	   Host: localhost:5984
+	   User-Agent: CouchDB
+
+	   {
+	       "_id": "_local/afa899a9e59589c3d4ce5668e3218aef",
+	       "_rev": "0-1",
+	       "_revisions": {
+	           "ids": [
+	               "31f36e40158e717fbe9842e227b389df"
+	           ],
+	           "start": 1
+	       },
+	       "history": [
+	           {
+	               "doc_write_failures": 0,
+	               "docs_read": 6,
+	               "docs_written": 6,
+	               "end_last_seq": 26,
+	               "end_time": "Thu, 07 Nov 2013 09:42:17 GMT",
+	               "missing_checked": 6,
+	               "missing_found": 6,
+	               "recorded_seq": 26,
+	               "session_id": "04bf15bf1d9fa8ac1abc67d0c3e04f07",
+	               "start_last_seq": 0,
+	               "start_time": "Thu, 07 Nov 2013 09:41:43 GMT"
+	           }
+	       ],
+	       "replication_id_version": 3,
+	       "session_id": "04bf15bf1d9fa8ac1abc67d0c3e04f07",
+	       "source_last_seq": 26
+	   }
+
+	   Response:
+
+	   HTTP/1.1 201 Created
+	   Cache-Control: must-revalidate
+	   Content-Length: 75
+	   Content-Type: application/json
+	   Date: Thu, 07 Nov 2013 09:42:17 GMT
+	   Server: CouchDB (Erlang/OTP)
+
+	   {
+	       "id": "_local/afa899a9e59589c3d4ce5668e3218aef",
+	       "ok": true,
+	       "rev": "0-2"
+	   }
+
+	*/
+	return nil
+}

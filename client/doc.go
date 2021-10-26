@@ -19,6 +19,10 @@ func (d *CompleteDoc) Size() int64 {
 	return 0
 }
 
+func (d *CompleteDoc) InlineAttachments() error {
+	return nil
+}
+
 var boundaryMixedRegexp = regexp.MustCompile(`multipart/mixed; boundary="([^"]+)"`)
 
 var boundaryRelatedRegexp = regexp.MustCompile(`multipart/related; boundary="([^"]+)"`)

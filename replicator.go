@@ -28,6 +28,8 @@ type Replicator struct {
 
 	sourceInfo, targetInfo *client.Info
 
+	replicationID string
+
 	sourceLastSeq string
 	diffResp      client.DiffResponse
 
@@ -156,6 +158,7 @@ func (r *Replicator) FindCommonAncestry(ctx context.Context) error {
 	// Generate Replication ID
 	id := r.job.GenerateReplicationID(r.name)
 	r.logger.Debugf("Replication ID %q", id)
+	r.replicationID = id
 
 	// Get Replication Log from Source
 	sourceRepLog, err := r.source.GetReplicationLog(ctx, id)
@@ -227,19 +230,13 @@ start:
 	return nil
 }
 
-type Stack []*client.CompleteDoc
-
-func (s *Stack) Size() int64 {
-	return 0 // TODO
-}
-
 // MB10 10 MB
 const MB10 = 10 * (1024 ^ 2)
 
 // ReplicateChanges
 // https://docs.couchdb.org/en/stable/replication/protocol.html#replicate-changes
 func (r *Replicator) ReplicateChanges(ctx context.Context) error {
-	var stack Stack
+	var stack client.Stack
 
 	for docid, diff := range r.diffResp {
 		// Fetch Next Changed Document
@@ -253,8 +250,16 @@ func (r *Replicator) ReplicateChanges(ctx context.Context) error {
 			// Are They Big Enough?
 			if doc.Size() > MB10 {
 				// Update Document on Target
-				// TODO directly update the document and attachments
+				err := r.target.UploadDocumentWithAttachments(ctx, doc)
+				if err != nil {
+					return err
+				}
 			} else {
+				err := doc.InlineAttachments()
+				if err != nil {
+					return err
+				}
+
 				// Put Document Into the Stack
 				stack = append(stack, doc)
 			}
@@ -263,15 +268,19 @@ func (r *Replicator) ReplicateChanges(ctx context.Context) error {
 		// Stack is Full?
 		if stack.Size() > MB10 {
 			// Upload Stack of Documents to Target
-			// TODO POST /target/_bulk_docs
+			r.target.BulkDocs(ctx, &stack)
 		} else {
 			continue
 		}
 
-		//  Ensure in Commit
-		// TODO POST /target/_ensure_full_commit
+		// Ensure in Commit
+		err = r.target.EnsureFullCommit(ctx)
+		if err != nil {
+			return err
+		}
 
 		// Record Replication Checkpoint
+
 		// TODO PUT /source/_local/replication-id
 		// TODO PUT /target/_local/replication-id
 	}
