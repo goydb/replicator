@@ -516,28 +516,32 @@ func (c *Client) BulkDocs(ctx context.Context, stack *Stack) error {
 // EnsureFullCommit
 // 2.4.2.5.4. Ensure In Commit
 func (c *Client) EnsureFullCommit(ctx context.Context) error {
-	/* 	Request:
+	u := urlJoin(c.remote.URL, "/_ensure_full_commit")
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, nil)
+	if err != nil {
+		return err
+	}
 
-	   	POST /target/_ensure_full_commit HTTP/1.1
-	   	Accept: application/json
-	   	Content-Type: application/json
-	   	Host: localhost:5984
+	resp, err := c.request(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close() // nolint: errcheck
 
-	   	Response:
+	var respBody struct {
+		InstanceStartTime string `json:"instance_start_time"`
+		OK                bool   `json:"ok"`
+	}
 
-	   	HTTP/1.1 201 Created
-	   	Cache-Control: must-revalidate
-	   	Content-Length: 53
-	   	Content-Type: application/json
-	   	Date: Web, 06 Nov 2013 18:20:43 GMT
-	   	Server: CouchDB (Erlang/OTP)
+	err = json.NewDecoder(resp.Body).Decode(&respBody)
+	if err != nil {
+		return err
+	}
 
-	   	{
-	   		"instance_start_time": "0",
-	   		"ok": true
-	   	}
+	if resp.StatusCode != http.StatusCreated || !respBody.OK {
+		return fmt.Errorf("rev diff request failed: %s", resp.Status)
+	}
 
-	*/
 	return nil
 }
 
