@@ -238,12 +238,13 @@ const MB10 = 10 * (1024 ^ 2)
 func (r *Replicator) ReplicateChanges(ctx context.Context) error {
 	var stack client.Stack
 
-	for docid, diff := range r.diffResp {
+	for docID, diff := range r.diffResp {
 		// Fetch Next Changed Document
-		doc, err := r.source.GetDocumentComplete(ctx, docid, diff)
+		doc, err := r.source.GetDocumentComplete(ctx, docID, diff)
 		if err != nil {
 			return err
 		}
+		r.logger.Debugf("Document size: %d has attachments: %v revision: %q", doc.Size(), doc.HasChangedAttachments(), doc.Data["_rev"])
 
 		// Document Has Changed Attachments?
 		if doc.HasChangedAttachments() {
@@ -291,12 +292,13 @@ func (r *Replicator) ReplicateChanges(ctx context.Context) error {
 	return nil
 }
 
+const NoVersion = "0"
+
 // 2.4.2.3.3. Compare Replication Logs
 func (r *Replicator) CompareReplicationLogs(ctx context.Context, source, target *client.ReplicationLog) error {
-
 	// 	If the Replication Logs are successfully retrieved from both Source and Target then the Replicator MUST determine their common ancestry by following the next algorithm:
 	if source == nil || target == nil {
-		r.sourceLastSeq = "0"
+		r.sourceLastSeq = NoVersion
 		return nil
 	}
 
@@ -317,6 +319,7 @@ func (r *Replicator) CompareReplicationLogs(ctx context.Context, source, target 
 	}
 
 	// If Source and Target has no common ancestry, the Replicator MUST run Full Replication.
-	r.sourceLastSeq = "0"
+	r.sourceLastSeq = NoVersion
+
 	return nil
 }

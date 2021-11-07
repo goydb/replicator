@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"mime/multipart"
 	"net/http"
 	"net/url"
 	"strings"
@@ -334,55 +332,12 @@ func (c *Client) GetDocumentComplete(ctx context.Context, docid string, diff *Di
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close() // nolint: errcheck
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("rev diff request failed: %s", resp.Status)
 	}
 
-	contentType := resp.Header.Get("Content-Type")
-	matches := boundaryMixedRegexp.FindStringSubmatch(contentType)
-
-	if len(matches) != 2 {
-		return nil, fmt.Errorf("no multipart mixed")
-	}
-
-	reader := multipart.NewReader(resp.Body, matches[1])
-	for {
-		c.logger.Debug("Next part")
-		part, err := reader.NextPart()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
-
-		c.logger.Debugf("Next 1 part ## %#v", part.Header)
-
-		contentType := part.Header.Get("Content-Type")
-		matches := boundaryRelatedRegexp.FindStringSubmatch(contentType)
-
-		if len(matches) != 2 {
-			return nil, fmt.Errorf("no multipart related")
-		}
-
-		mr := multipart.NewReader(part, matches[1])
-		for {
-			c.logger.Debug("Next part")
-			part1, err := mr.NextPart()
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				return nil, err
-			}
-
-			c.logger.Debugf("Next 2 part ## %#v", part1.Header)
-		}
-	}
-
-	return nil, nil
+	return NewCompleteDoc(docid, resp)
 }
 
 // UploadDocumentWithAttachments
