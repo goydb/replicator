@@ -1,6 +1,7 @@
 package client
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,12 +15,19 @@ var boundaryMixedRegexp = regexp.MustCompile(`multipart/mixed; boundary="([^"]+)
 
 var boundaryRelatedRegexp = regexp.MustCompile(`multipart/related; boundary="([^"]+)"`)
 
+var dispositionFilename = regexp.MustCompile(`attachment; filename="([^"]+)"`)
+
 type CompleteDoc struct {
 	ID          string
 	Data        map[string]interface{}
 	resp        *http.Response
-	attachments []*multipart.Part
+	attachments []attachmentMultipartData
 	size        sizeWriter
+}
+
+type attachmentMultipartData struct {
+	Part *multipart.Part
+	Data []byte
 }
 
 type sizeWriter int
@@ -122,7 +130,15 @@ func (d *CompleteDoc) parseStageTwo(reader *multipart.Reader) error {
 			}
 		case strings.HasPrefix(contentDisposition, "attachment"):
 			// mutlipart attachments
-			d.attachments = append(d.attachments, part)
+			data, err := io.ReadAll(part)
+			if err != nil {
+				return fmt.Errorf("failed to read %s", contentDisposition)
+			}
+
+			d.attachments = append(d.attachments, attachmentMultipartData{
+				Part: part,
+				Data: data,
+			})
 		default:
 			// unknown type
 			return fmt.Errorf("invalid content disposition: %q", contentDisposition)
@@ -151,8 +167,33 @@ func getMultipart(re *regexp.Regexp, r io.Reader, header http.Header) (*multipar
 }
 
 // InlineAttachments
-// inlines the attachments using the base64 encoding.
+// inline the attachments using the base64 encoding.
 func (d *CompleteDoc) InlineAttachments() error {
-	// TODO implement
+	for _, attachment := range d.attachments {
+		disposition := attachment.Part.Header.Get("Content-Disposition")
+		matches := dispositionFilename.FindStringSubmatch(disposition)
+
+		if len(matches) != 2 {
+			return fmt.Errorf("invalid attachment, filename missing")
+		}
+		filename := matches[1]
+
+		// get to attachments
+		attrsObj, ok := d.Data["_attachments"].(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("invalid attachments data in json for %q", filename)
+		}
+
+		// get to single attachment
+		attObj, ok := attrsObj[filename].(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("invalid attachment data in json for %q", filename)
+		}
+
+		// inline attachment
+		attObj["data"] = base64.RawStdEncoding.EncodeToString(attachment.Data)
+		attObj["stub"] = false
+	}
+
 	return nil
 }
