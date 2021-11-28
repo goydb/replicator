@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -278,12 +279,12 @@ func (c *Client) RevDiff(ctx context.Context, r RevDiffRequest) (DiffResponse, e
 
 	u := urlJoin(c.remote.URL, "_revs_diff")
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, &buf)
-	req.Header.Add("Accept", "application/json")
-	req.Header.Add("Content-Type", "application/json")
-
 	if err != nil {
 		return nil, err
 	}
+
+	req.Header.Add("Accept", "application/json")
+	req.Header.Add("Content-Type", "application/json")
 
 	resp, err := c.request(req)
 	if err != nil {
@@ -323,10 +324,10 @@ func (c *Client) GetDocumentComplete(ctx context.Context, docid string, diff *Di
 	u := urlJoin(c.remote.URL, docid+"?revs=true&latest=true&open_revs=[")
 	u += strings.Join(diff.Missing, ",") + "]"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	req.Header.Add("Accept", "multipart/mixed")
 	if err != nil {
 		return nil, err
 	}
+	req.Header.Add("Accept", "multipart/mixed")
 
 	resp, err := c.request(req)
 	if err != nil {
@@ -343,62 +344,38 @@ func (c *Client) GetDocumentComplete(ctx context.Context, docid string, diff *Di
 // UploadDocumentWithAttachments
 // 2.4.2.5.3. Upload Document with Attachments
 func (c *Client) UploadDocumentWithAttachments(ctx context.Context, doc *CompleteDoc) error {
-	/* PUT /target/SpaghettiWithMeatballs?new_edits=false HTTP/1.1
-	Accept: application/json
-	Content-Length: 1030
-	Content-Type: multipart/related; boundary="864d690aeb91f25d469dec6851fb57f2"
-	Host: localhost:5984
-	User-Agent: CouchDB
-
-	--2fa48cba80d0cdba7829931fe8acce9d
-	Content-Type: application/json
-
-	{
-		"_attachments": {
-			"recipe.txt": {
-				"content_type": "text/plain",
-				"digest": "md5-R5CrCb6fX10Y46AqtNn0oQ==",
-				"follows": true,
-				"length": 87,
-				"revpos": 7
-			}
-		},
-		"_id": "SpaghettiWithMeatballs",
-		"_rev": "7-474f12eb068c717243487a9505f6123b",
-		"_revisions": {
-			"ids": [
-				"474f12eb068c717243487a9505f6123b",
-				"5949cfcd437e3ee22d2d98a26d1a83bf",
-				"00ecbbc54e2a171156ec345b77dfdf59",
-				"fc997b62794a6268f2636a4a176efcd6",
-				"3552c87351aadc1e4bea2461a1e8113a",
-				"404838bc2862ce76c6ebed046f9eb542",
-				"5defd9d813628cea6e98196eb0ee8594"
-			],
-			"start": 7
-		},
-		"description": "An Italian-American delicious dish",
-		"ingredients": [
-			"spaghetti",
-			"tomato sauce",
-			"meatballs",
-			"love"
-		],
-		"name": "Spaghetti with meatballs"
+	u := urlJoin(c.remote.URL, doc.ID+"?new_edits=false")
+	r, boundary, err := doc.Reader()
+	if err != nil {
+		return err
 	}
-	--2fa48cba80d0cdba7829931fe8acce9d
-	Content-Disposition: attachment; filename="recipe.txt"
-	Content-Type: text/plain
-	Content-Length: 87
 
-	1. Cook spaghetti
-	2. Cook meetballs
-	3. Mix them
-	4. Add tomato sauce
-	5. ...
-	6. PROFIT!
+	// we need to copy the returned document with attachments into a buffer
+	// to get the total size when sending, as otherwise couchdb will block
+	// on the request.
+	var buf bytes.Buffer
+	_, err = io.Copy(&buf, r)
+	if err != nil {
+		return err
+	}
 
-	--2fa48cba80d0cdba7829931fe8acce9d-- */
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, u, &buf)
+	if err != nil {
+		return err
+	}
+
+	req.Header.Add("Accept", "application/json")
+	req.Header.Add("Content-Type", `multipart/related; boundary="`+boundary+`"`)
+
+	resp, err := c.request(req)
+	if err != nil {
+		return err
+	}
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return fmt.Errorf("upload document with attachment request failed: %s", resp.Status)
+	}
+
 	return nil
 }
 

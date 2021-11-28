@@ -7,6 +7,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"regexp"
 	"strings"
 )
@@ -196,4 +197,44 @@ func (d *CompleteDoc) InlineAttachments() error {
 	}
 
 	return nil
+}
+
+// Reader returns a multipart mime representation of the complete doc
+func (d *CompleteDoc) Reader() (io.ReadCloser, string, error) {
+	r, w := io.Pipe()
+	mr := multipart.NewWriter(w)
+
+	go func() {
+		// write document json
+		dw, err := mr.CreatePart(textproto.MIMEHeader{
+			"Content-Type": []string{"application/json"},
+		})
+		if err != nil {
+			w.CloseWithError(err)
+		}
+
+		err = json.NewEncoder(dw).Encode(d.Data)
+		if err != nil {
+			w.CloseWithError(err)
+		}
+
+		// write attachments
+		for _, attachment := range d.attachments {
+			aw, err := mr.CreatePart(attachment.Part.Header)
+			if err != nil {
+				w.CloseWithError(err)
+			}
+
+			_, err = aw.Write(attachment.Data)
+			if err != nil {
+				w.CloseWithError(err)
+			}
+		}
+
+		// close multipart writer and pipe
+		mr.Close()
+		w.Close()
+	}()
+
+	return r, mr.Boundary(), nil
 }
