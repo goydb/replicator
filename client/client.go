@@ -333,6 +333,7 @@ func (c *Client) GetDocumentComplete(ctx context.Context, docid string, diff *Di
 	if err != nil {
 		return nil, err
 	}
+	defer resp.Body.Close() // nolint: errcheck
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("rev diff request failed: %s", resp.Status)
@@ -349,6 +350,7 @@ func (c *Client) UploadDocumentWithAttachments(ctx context.Context, doc *Complet
 	if err != nil {
 		return err
 	}
+	defer r.Close()
 
 	// we need to copy the returned document with attachments into a buffer
 	// to get the total size when sending, as otherwise couchdb will block
@@ -371,6 +373,7 @@ func (c *Client) UploadDocumentWithAttachments(ctx context.Context, doc *Complet
 	if err != nil {
 		return err
 	}
+	defer resp.Body.Close() // nolint: errcheck
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		return fmt.Errorf("upload document with attachment request failed: %s", resp.Status)
@@ -382,65 +385,42 @@ func (c *Client) UploadDocumentWithAttachments(ctx context.Context, doc *Complet
 // BulkDocs
 // 2.4.2.5.2. Upload Batch of Changed Documents
 func (c *Client) BulkDocs(ctx context.Context, stack *Stack) error {
-	/*
-	   Request:
+	u := urlJoin(c.remote.URL, "_bulk_docs")
 
-	   POST /target/_bulk_docs HTTP/1.1
-	   Accept: application/json
-	   Content-Length: 826
-	   Content-Type:application/json
-	   Host: localhost:5984
-	   User-Agent: CouchDB
-	   X-Couch-Full-Commit: false
+	// documents
+	r, err := stack.Reader()
+	if err != nil {
+		return err
+	}
+	defer r.Close()
 
-	   {
-	       "docs": [
-	           {
-	               "_id": "SpaghettiWithMeatballs",
-	               "_rev": "1-917fa2381192822767f010b95b45325b",
-	               "_revisions": {
-	                   "ids": [
-	                       "917fa2381192822767f010b95b45325b"
-	                   ],
-	                   "start": 1
-	               },
-	               "description": "An Italian-American delicious dish",
-	               "ingredients": [
-	                   "spaghetti",
-	                   "tomato sauce",
-	                   "meatballs"
-	               ],
-	               "name": "Spaghetti with meatballs"
-	           },
-	           {
-	               "_id": "LambStew",
-	               "_rev": "1-34c318924a8f327223eed702ddfdc66d",
-	               "_revisions": {
-	                   "ids": [
-	                       "34c318924a8f327223eed702ddfdc66d"
-	                   ],
-	                   "start": 1
-	               },
-	               "servings": 6,
-	               "subtitle": "Delicious with scone topping",
-	               "title": "Lamb Stew"
-	           },
-	           {
-	               "_id": "FishStew",
-	               "_rev": "1-9c65296036141e575d32ba9c034dd3ee",
-	               "_revisions": {
-	                   "ids": [
-	                       "9c65296036141e575d32ba9c034dd3ee"
-	                   ],
-	                   "start": 1
-	               },
-	               "servings": 4,
-	               "subtitle": "Delicious with fresh bread",
-	               "title": "Fish Stew"
-	           }
-	       ],
-	       "new_edits": false
-	   } */
+	// we need to copy the returned document with attachments into a buffer
+	// to get the total size when sending, as otherwise couchdb will block
+	// on the request.
+	var buf bytes.Buffer
+	_, err = io.Copy(&buf, r)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		return err
+	}
+
+	req.Header.Add("Accept", "application/json")
+	req.Header.Add("Content-Type", "application/json")
+	req.Header.Add("X-Couch-Full-Commit", "false")
+
+	resp, err := c.request(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close() // nolint: errcheck
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return fmt.Errorf("bulk upload request failed: %s", resp.Status)
+	}
 
 	return nil
 }
@@ -448,11 +428,13 @@ func (c *Client) BulkDocs(ctx context.Context, stack *Stack) error {
 // EnsureFullCommit
 // 2.4.2.5.4. Ensure In Commit
 func (c *Client) EnsureFullCommit(ctx context.Context) error {
-	u := urlJoin(c.remote.URL, "/_ensure_full_commit")
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, nil)
+	u := urlJoin(c.remote.URL, "_ensure_full_commit")
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, strings.NewReader("{}"))
 	if err != nil {
 		return err
 	}
+	req.Header.Add("Accept", "application/json")
+	req.Header.Add("Content-Type", "application/json")
 
 	resp, err := c.request(req)
 	if err != nil {

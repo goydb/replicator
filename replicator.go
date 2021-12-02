@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/goydb/replicator/client"
@@ -268,26 +267,38 @@ func (r *Replicator) ReplicateChanges(ctx context.Context) error {
 
 		// Stack is Full?
 		if stack.Size() > MB10 {
-			// Upload Stack of Documents to Target
-			r.target.BulkDocs(ctx, &stack)
-		} else {
-			continue
+			err := r.replicateChangesBulk(ctx, stack)
+			if err != nil {
+				return err
+			}
 		}
-
-		// Ensure in Commit
-		err = r.target.EnsureFullCommit(ctx)
-		if err != nil {
-			return err
-		}
-
-		// Record Replication Checkpoint
-
-		// TODO PUT /source/_local/replication-id
-		// TODO PUT /target/_local/replication-id
 	}
 
-	// WIP point
-	log.Fatal("ERROR")
+	// stack too small but changes available? push rest
+	if len(stack) > 0 {
+		return r.replicateChangesBulk(ctx, stack)
+	}
+
+	return nil
+}
+
+func (r *Replicator) replicateChangesBulk(ctx context.Context, stack client.Stack) error {
+	// Upload Stack of Documents to Target
+	err := r.target.BulkDocs(ctx, &stack)
+	if err != nil {
+		return err
+	}
+
+	// Ensure in Commit
+	err = r.target.EnsureFullCommit(ctx)
+	if err != nil {
+		return err
+	}
+
+	// Record Replication Checkpoint
+
+	// TODO: PUT /source/_local/replication-id
+	// TODO: PUT /target/_local/replication-id
 
 	return nil
 }

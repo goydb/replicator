@@ -1,6 +1,8 @@
 package client
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -152,7 +154,12 @@ func (d *CompleteDoc) parseStageTwo(reader *multipart.Reader) error {
 func (d *CompleteDoc) parseDocument(r io.ReadCloser) error {
 	defer r.Close() // nolint: errcheck
 
-	return json.NewDecoder(r).Decode(&d.Data)
+	err := json.NewDecoder(r).Decode(&d.Data)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func getMultipart(re *regexp.Regexp, r io.Reader, header http.Header) (*multipart.Reader, error) {
@@ -191,9 +198,30 @@ func (d *CompleteDoc) InlineAttachments() error {
 			return fmt.Errorf("invalid attachment data in json for %q", filename)
 		}
 
+		// if encoded via gzip, decode
+		if attObj["encoding"] == "gzip" {
+			r := io.Reader(bytes.NewReader(attachment.Data))
+			r, err := gzip.NewReader(r)
+			if err != nil {
+				return fmt.Errorf("unable to create attachment from gzip: %w", err)
+			}
+			data, err := io.ReadAll(r)
+			if err != nil {
+				return fmt.Errorf("unable to decompress attachment from gzip: %w", err)
+			}
+			attachment.Data = data
+			delete(attObj, "encoding")
+			delete(attObj, "encoded_length")
+		}
+
 		// inline attachment
-		attObj["data"] = base64.RawStdEncoding.EncodeToString(attachment.Data)
-		attObj["stub"] = false
+		data := base64.StdEncoding.EncodeToString(attachment.Data)
+		attObj["data"] = data
+
+		delete(attObj, "stub")
+		delete(attObj, "digest")
+		delete(attObj, "length")
+		delete(attObj, "follows")
 	}
 
 	return nil
