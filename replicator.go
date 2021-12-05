@@ -32,6 +32,9 @@ type Replicator struct {
 	sourceLastSeq string
 	diffResp      client.DiffResponse
 
+	sourceRepLog, targetRepLog *client.ReplicationLog
+	currentHistory             *client.History
+
 	logger logger.Logger
 }
 
@@ -88,13 +91,13 @@ func (r *Replicator) Run(ctx context.Context) error {
 	r.logger.Debugf("Replication will start since: %s", r.sourceLastSeq)
 
 	r.logger.Debug("LocateChangedDocuments")
-	err = r.LocateChangedDocuments(ctx)
+	lastSeq, err := r.LocateChangedDocuments(ctx)
 	if err != nil {
 		return r.logErrf("locate changed documents failed: %w", err)
 	}
 
-	r.logger.Debug("ReplicateChanges")
-	err = r.ReplicateChanges(ctx)
+	r.logger.Debugf("ReplicateChanges (lastSeq: %q)", lastSeq)
+	err = r.ReplicateChanges(ctx, lastSeq)
 	if err != nil {
 		return r.logErrf("replicate changes failed: %w", err)
 	}
@@ -177,12 +180,20 @@ func (r *Replicator) FindCommonAncestry(ctx context.Context) error {
 		return err
 	}
 
+	r.sourceRepLog = sourceRepLog
+	r.targetRepLog = targetRepLog
+	r.currentHistory = &client.History{
+		StartTime:    client.Time(time.Now()),
+		StartLastSeq: r.sourceLastSeq,
+		SessionID:    id,
+	}
+
 	return nil
 }
 
 // Locate Changed Documents
 // https://docs.couchdb.org/en/stable/replication/protocol.html#locate-changed-documents
-func (r *Replicator) LocateChangedDocuments(ctx context.Context) error {
+func (r *Replicator) LocateChangedDocuments(ctx context.Context) (string, error) {
 start:
 	time.Sleep(time.Second)
 
@@ -192,7 +203,7 @@ start:
 		Heartbeat: r.job.HeartbeatOrFallback(),
 	})
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	// No more changes
@@ -201,7 +212,7 @@ start:
 		if r.job.Continuous {
 			goto start
 		} else {
-			return ErrReplicationCompleted // Replication Completed
+			return "", ErrReplicationCompleted // Replication Completed
 		}
 	}
 
@@ -212,12 +223,14 @@ start:
 			diff[change.ID] = append(diff[change.ID], rev.Rev)
 		}
 	}
+	r.currentHistory.MissingFound += len(diff)
 
 	// Compare Documents Revisions
 	diffResp, err := r.target.RevDiff(ctx, diff)
 	if err != nil {
-		return err
+		return "", err
 	}
+	r.currentHistory.MissingChecked += len(diffResp)
 
 	// Any Differences Found?
 	r.logger.Debugf("Differences: %d", len(diffResp))
@@ -226,7 +239,7 @@ start:
 	}
 
 	r.diffResp = diffResp
-	return nil
+	return changes.LastSeq, nil
 }
 
 // MB10 10 MB
@@ -234,7 +247,7 @@ const MB10 = 10 * (1024 ^ 2)
 
 // ReplicateChanges
 // https://docs.couchdb.org/en/stable/replication/protocol.html#replicate-changes
-func (r *Replicator) ReplicateChanges(ctx context.Context) error {
+func (r *Replicator) ReplicateChanges(ctx context.Context, lastSeq string) error {
 	var stack client.Stack
 
 	for docID, diff := range r.diffResp {
@@ -243,6 +256,7 @@ func (r *Replicator) ReplicateChanges(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		r.currentHistory.DocsRead++
 		r.logger.Debugf("Document size: %d has attachments: %v revision: %q", doc.Size(), doc.HasChangedAttachments(), doc.Data["_rev"])
 
 		// Document Has Changed Attachments?
@@ -252,8 +266,10 @@ func (r *Replicator) ReplicateChanges(ctx context.Context) error {
 				// Update Document on Target
 				err := r.target.UploadDocumentWithAttachments(ctx, doc)
 				if err != nil {
+					r.currentHistory.DocWriteFailures++
 					return err
 				}
+				r.currentHistory.DocsWritten++
 			} else {
 				err := doc.InlineAttachments()
 				if err != nil {
@@ -264,6 +280,8 @@ func (r *Replicator) ReplicateChanges(ctx context.Context) error {
 				stack = append(stack, doc)
 			}
 		}
+
+		r.currentHistory.EndLastSeq = lastSeq
 
 		// Stack is Full?
 		if stack.Size() > MB10 {
@@ -286,8 +304,10 @@ func (r *Replicator) replicateChangesBulk(ctx context.Context, stack client.Stac
 	// Upload Stack of Documents to Target
 	err := r.target.BulkDocs(ctx, &stack)
 	if err != nil {
+		r.currentHistory.DocWriteFailures += len(stack)
 		return err
 	}
+	r.currentHistory.DocsWritten += len(stack)
 
 	// Ensure in Commit
 	err = r.target.EnsureFullCommit(ctx)
@@ -295,10 +315,20 @@ func (r *Replicator) replicateChangesBulk(ctx context.Context, stack client.Stac
 		return err
 	}
 
-	// Record Replication Checkpoint
+	r.currentHistory.EndTime = client.Time(time.Now())
 
-	// TODO: PUT /source/_local/replication-id
-	// TODO: PUT /target/_local/replication-id
+	// Record Replication Checkpoint
+	err = r.source.RecordReplicationCheckpoint(ctx, r.sourceRepLog)
+	if err != nil {
+		return err
+	}
+
+	err = r.target.RecordReplicationCheckpoint(ctx, r.targetRepLog)
+	if err != nil {
+		return err
+	}
+
+	r.currentHistory = nil
 
 	return nil
 }

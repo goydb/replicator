@@ -208,14 +208,35 @@ type History struct {
 	DocWriteFailures int    `json:"doc_write_failures"` // Number of failed writes
 	DocsRead         int    `json:"docs_read"`          // Number of read documents
 	DocsWritten      int    `json:"docs_written"`       // Number of written documents
-	EndLastSeq       int    `json:"end_last_seq"`       //  Last processed Update Sequence ID
-	EndTime          string `json:"end_time"`           // Replication completion timestamp in RFC 5322 format
+	EndLastSeq       string `json:"end_last_seq"`       // Last processed Update Sequence ID
+	EndTime          Time   `json:"end_time"`           // Replication completion timestamp in RFC 5322 format
 	MissingChecked   int    `json:"missing_checked"`    // Number of checked revisions on Source
 	MissingFound     int    `json:"missing_found"`      // Number of missing revisions found on Target
 	RecordedSeq      string `json:"recorded_seq"`       // Recorded intermediate Checkpoint. Required
 	SessionID        string `json:"session_id"`         // Unique session ID. Commonly, a random UUID value is used. Required
-	StartLastSeq     int    `json:"start_last_seq"`     // Start update Sequence ID
-	StartTime        string `json:"start_time"`         //  Replication start timestamp in RFC 5322 format
+	StartLastSeq     string `json:"start_last_seq"`     // Start update Sequence ID
+	StartTime        Time   `json:"start_time"`         // Replication start timestamp in RFC 5322 format
+}
+
+type Time time.Time
+
+func (t Time) MarshalJSON() ([]byte, error) {
+	tstr := time.Time(t).Format(time.RFC822)
+	return json.Marshal(tstr)
+}
+
+func (t *Time) UnmarshalJSON(data []byte) error {
+	var tstr string
+	err := json.Unmarshal(data, &tstr)
+	if err != nil {
+		return err
+	}
+	ti, err := time.Parse(time.RFC822, tstr)
+	if err != nil {
+		return err
+	}
+	*t = Time(ti)
+	return nil
 }
 
 func (c *Client) Changes(ctx context.Context, opts ChangeOptions) (*ChangesResponse, error) {
@@ -461,7 +482,7 @@ func (c *Client) EnsureFullCommit(ctx context.Context) error {
 
 // RecordReplicationCheckpoint
 // 2.4.2.5.5. Record Replication Checkpoint
-func (c *Client) RecordReplicationCheckpoint(ctx context.Context) error {
+func (c *Client) RecordReplicationCheckpoint(ctx context.Context, repLog *ReplicationLog) error {
 
 	/*
 	   Request:
