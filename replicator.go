@@ -167,11 +167,17 @@ func (r *Replicator) FindCommonAncestry(ctx context.Context) error {
 	if err != nil && !errors.Is(err, client.ErrNotFound) {
 		return err
 	}
+	if sourceRepLog == nil {
+		sourceRepLog = new(client.ReplicationLog)
+	}
 
 	// Get Replication Log from Target
 	targetRepLog, err := r.target.GetReplicationLog(ctx, id)
 	if err != nil && !errors.Is(err, client.ErrNotFound) {
 		return err
+	}
+	if targetRepLog == nil {
+		targetRepLog = new(client.ReplicationLog)
 	}
 
 	// Compare Replication Logs
@@ -281,8 +287,6 @@ func (r *Replicator) ReplicateChanges(ctx context.Context, lastSeq string) error
 			}
 		}
 
-		r.currentHistory.EndLastSeq = lastSeq
-
 		// Stack is Full?
 		if stack.Size() > MB10 {
 			err := r.replicateChangesBulk(ctx, stack)
@@ -294,8 +298,28 @@ func (r *Replicator) ReplicateChanges(ctx context.Context, lastSeq string) error
 
 	// stack too small but changes available? push rest
 	if len(stack) > 0 {
-		return r.replicateChangesBulk(ctx, stack)
+		err := r.replicateChangesBulk(ctx, stack)
+		if err != nil {
+			return err
+		}
 	}
+
+	r.currentHistory.SessionID = r.replicationID
+	r.currentHistory.EndLastSeq = lastSeq
+	r.currentHistory.EndTime = client.Time(time.Now())
+
+	if r.currentHistory.DocsWritten > 0 {
+		err := r.recordReplicationCheckpoint(ctx, r.sourceRepLog, lastSeq)
+		if err != nil {
+			return err
+		}
+		err = r.recordReplicationCheckpoint(ctx, r.targetRepLog, lastSeq)
+		if err != nil {
+			return err
+		}
+	}
+
+	r.currentHistory = nil
 
 	return nil
 }
@@ -315,20 +339,21 @@ func (r *Replicator) replicateChangesBulk(ctx context.Context, stack client.Stac
 		return err
 	}
 
-	r.currentHistory.EndTime = client.Time(time.Now())
+	return nil
+}
+
+func (r *Replicator) recordReplicationCheckpoint(ctx context.Context, repLog *client.ReplicationLog, lastSeq string) error {
+	repLog.ID = r.replicationID
+	repLog.ReplicationIDVersion = 3
+	repLog.SessionID = r.replicationID
+	repLog.SourceLastSeq = lastSeq
+	repLog.History = append(r.targetRepLog.History, r.currentHistory)
 
 	// Record Replication Checkpoint
-	err = r.source.RecordReplicationCheckpoint(ctx, r.sourceRepLog)
+	err := r.source.RecordReplicationCheckpoint(ctx, repLog, r.replicationID)
 	if err != nil {
 		return err
 	}
-
-	err = r.target.RecordReplicationCheckpoint(ctx, r.targetRepLog)
-	if err != nil {
-		return err
-	}
-
-	r.currentHistory = nil
 
 	return nil
 }
@@ -344,7 +369,7 @@ func (r *Replicator) CompareReplicationLogs(ctx context.Context, source, target 
 	}
 
 	//     Compare session_id values for the chronological last session - if they match both Source and Target have a common Replication history and it seems to be valid. Use 	source_last_seq value for the startup Checkpoint
-	if source.SessionID == target.SessionID {
+	if source.SessionID == target.SessionID && source.SourceLastSeq != "" {
 		r.sourceLastSeq = source.SourceLastSeq
 		return nil
 	}

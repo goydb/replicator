@@ -196,12 +196,12 @@ func (c *Client) GetReplicationLog(ctx context.Context, id string) (*Replication
 }
 
 type ReplicationLog struct {
-	ID                   string    `json:"_id"`
-	Rev                  string    `json:"_rev"`
-	History              []History `json:"history"`
-	ReplicationIDVersion int       `json:"replication_id_version"` // Replication protocol version. Defines Replication ID calculation algorithm, HTTP API calls and the others routines. Required
-	SessionID            string    `json:"session_id"`             // Unique ID of the last session. Shortcut to the session_id field of the latest history object. Required
-	SourceLastSeq        string    `json:"source_last_seq"`        // Last processed Checkpoint. Shortcut to the recorded_seq field of the latest history object. Required
+	ID                   string     `json:"_id"`
+	Rev                  string     `json:"_rev,omitempty"`
+	History              []*History `json:"history"`
+	ReplicationIDVersion int        `json:"replication_id_version"` // Replication protocol version. Defines Replication ID calculation algorithm, HTTP API calls and the others routines. Required
+	SessionID            string     `json:"session_id"`             // Unique ID of the last session. Shortcut to the session_id field of the latest history object. Required
+	SourceLastSeq        string     `json:"source_last_seq"`        // Last processed Checkpoint. Shortcut to the recorded_seq field of the latest history object. Required
 }
 
 type History struct {
@@ -482,62 +482,31 @@ func (c *Client) EnsureFullCommit(ctx context.Context) error {
 
 // RecordReplicationCheckpoint
 // 2.4.2.5.5. Record Replication Checkpoint
-func (c *Client) RecordReplicationCheckpoint(ctx context.Context, repLog *ReplicationLog) error {
+func (c *Client) RecordReplicationCheckpoint(ctx context.Context, repLog *ReplicationLog, replicationID string) error {
+	rl, err := json.Marshal(repLog)
+	if err != nil {
+		return err
+	}
 
-	/*
-	   Request:
+	u := urlJoin(c.remote.URL, "_local", replicationID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, u, bytes.NewReader(rl))
+	if err != nil {
+		return err
+	}
+	req.Header.Add("Accept", "application/json")
+	req.Header.Add("Content-Type", "application/json")
 
-	   PUT /source/_local/afa899a9e59589c3d4ce5668e3218aef HTTP/1.1
-	   Accept: application/json
-	   Content-Length: 591
-	   Content-Type: application/json
-	   Host: localhost:5984
-	   User-Agent: CouchDB
+	resp, err := c.request(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close() // nolint: errcheck
 
-	   {
-	       "_id": "_local/afa899a9e59589c3d4ce5668e3218aef",
-	       "_rev": "0-1",
-	       "_revisions": {
-	           "ids": [
-	               "31f36e40158e717fbe9842e227b389df"
-	           ],
-	           "start": 1
-	       },
-	       "history": [
-	           {
-	               "doc_write_failures": 0,
-	               "docs_read": 6,
-	               "docs_written": 6,
-	               "end_last_seq": 26,
-	               "end_time": "Thu, 07 Nov 2013 09:42:17 GMT",
-	               "missing_checked": 6,
-	               "missing_found": 6,
-	               "recorded_seq": 26,
-	               "session_id": "04bf15bf1d9fa8ac1abc67d0c3e04f07",
-	               "start_last_seq": 0,
-	               "start_time": "Thu, 07 Nov 2013 09:41:43 GMT"
-	           }
-	       ],
-	       "replication_id_version": 3,
-	       "session_id": "04bf15bf1d9fa8ac1abc67d0c3e04f07",
-	       "source_last_seq": 26
-	   }
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
 
-	   Response:
+		return fmt.Errorf("rev diff request failed: %s (%s)", resp.Status, string(body))
+	}
 
-	   HTTP/1.1 201 Created
-	   Cache-Control: must-revalidate
-	   Content-Length: 75
-	   Content-Type: application/json
-	   Date: Thu, 07 Nov 2013 09:42:17 GMT
-	   Server: CouchDB (Erlang/OTP)
-
-	   {
-	       "id": "_local/afa899a9e59589c3d4ce5668e3218aef",
-	       "ok": true,
-	       "rev": "0-2"
-	   }
-
-	*/
 	return nil
 }
