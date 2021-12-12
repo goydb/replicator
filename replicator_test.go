@@ -27,6 +27,9 @@ func TestReplication(t *testing.T) {
 	assert.NoError(t, err)
 	r.SetLogger(new(logger.Stdout))
 
+	// err = r.Reset(context.Background())
+	// assert.NoError(t, err)
+
 	err = r.Run(context.Background())
 	assert.NoError(t, err)
 }

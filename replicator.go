@@ -158,9 +158,7 @@ func (r *Replicator) GetPeersInformation(ctx context.Context) error {
 // https://docs.couchdb.org/en/stable/replication/protocol.html#find-common-ancestry
 func (r *Replicator) FindCommonAncestry(ctx context.Context) error {
 	// Generate Replication ID
-	id := r.job.GenerateReplicationID(r.name)
-	r.logger.Debugf("Replication ID %q", id)
-	r.replicationID = id
+	id := r.buildReplicationID()
 
 	// Get Replication Log from Source
 	sourceRepLog, err := r.source.GetReplicationLog(ctx, id)
@@ -276,16 +274,17 @@ func (r *Replicator) ReplicateChanges(ctx context.Context, lastSeq string) error
 					return err
 				}
 				r.currentHistory.DocsWritten++
+				continue
 			} else {
 				err := doc.InlineAttachments()
 				if err != nil {
 					return err
 				}
-
-				// Put Document Into the Stack
-				stack = append(stack, doc)
 			}
 		}
+
+		// Put Document Into the Stack
+		stack = append(stack, doc)
 
 		// Stack is Full?
 		if stack.Size() > MB10 {
@@ -322,6 +321,31 @@ func (r *Replicator) ReplicateChanges(ctx context.Context, lastSeq string) error
 	r.currentHistory = nil
 
 	return nil
+}
+
+// Reset resets the replicator state at the source and target database
+func (r *Replicator) Reset(ctx context.Context) error {
+	id := r.buildReplicationID()
+
+	err := r.source.RemoveReplicationCheckpoint(ctx, id)
+	if err != nil {
+		return err
+	}
+	err = r.target.RemoveReplicationCheckpoint(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (r *Replicator) buildReplicationID() string {
+	if r.replicationID == "" {
+		id := r.job.GenerateReplicationID(r.name)
+		r.logger.Debugf("Replication ID %q", id)
+		r.replicationID = id
+	}
+	return r.replicationID
 }
 
 func (r *Replicator) replicateChangesBulk(ctx context.Context, stack client.Stack) error {

@@ -510,3 +510,27 @@ func (c *Client) RecordReplicationCheckpoint(ctx context.Context, repLog *Replic
 
 	return nil
 }
+
+func (c *Client) RemoveReplicationCheckpoint(ctx context.Context, replicationID string) error {
+	u := urlJoin(c.remote.URL, "_local", replicationID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, u, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Add("Accept", "application/json")
+	req.Header.Add("Content-Type", "application/json")
+
+	resp, err := c.request(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close() // nolint: errcheck
+
+	if resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+
+		return fmt.Errorf("delete replication checkpoint request failed: %s (%s)", resp.Status, string(body))
+	}
+
+	return nil
+}
