@@ -88,18 +88,26 @@ func (r *Replicator) Run(ctx context.Context) error {
 	if err != nil {
 		return r.logErrf("find common ancestry failed: %w", err)
 	}
-	r.logger.Debugf("Replication will start since: %s", r.sourceLastSeq)
 
-	r.logger.Debug("LocateChangedDocuments")
-	lastSeq, err := r.LocateChangedDocuments(ctx)
-	if err != nil {
-		return r.logErrf("locate changed documents failed: %w", err)
-	}
+	for replicate := true; replicate; replicate = r.job.Continuous {
+		r.logger.Debugf("Replication will start since: %s", r.sourceLastSeq)
+		r.currentHistory = &client.History{
+			StartTime:    client.Time(time.Now()),
+			StartLastSeq: r.sourceLastSeq,
+			SessionID:    r.replicationID,
+		}
 
-	r.logger.Debugf("ReplicateChanges (lastSeq: %q)", lastSeq)
-	err = r.ReplicateChanges(ctx, lastSeq)
-	if err != nil {
-		return r.logErrf("replicate changes failed: %w", err)
+		r.logger.Debug("LocateChangedDocuments")
+		lastSeq, err := r.LocateChangedDocuments(ctx)
+		if err != nil {
+			return r.logErrf("locate changed documents failed: %w", err)
+		}
+
+		r.logger.Debugf("ReplicateChanges (lastSeq: %q)", lastSeq)
+		err = r.ReplicateChanges(ctx, lastSeq)
+		if err != nil {
+			return r.logErrf("replicate changes failed: %w", err)
+		}
 	}
 
 	return nil
@@ -186,11 +194,6 @@ func (r *Replicator) FindCommonAncestry(ctx context.Context) error {
 
 	r.sourceRepLog = sourceRepLog
 	r.targetRepLog = targetRepLog
-	r.currentHistory = &client.History{
-		StartTime:    client.Time(time.Now()),
-		StartLastSeq: r.sourceLastSeq,
-		SessionID:    id,
-	}
 
 	return nil
 }
